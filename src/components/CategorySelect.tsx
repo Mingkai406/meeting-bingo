@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { BingoCard as BingoCardType, Category, CategoryId } from '../types';
 import { CATEGORIES } from '../data/categories';
 import { generateCard } from '../lib/cardGenerator';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
 
 interface Props {
   onStart: (categoryId: CategoryId, card: BingoCardType) => void;
@@ -41,41 +43,31 @@ export function CategorySelect({ onStart, onBack }: Props) {
         </h2>
         <p className="text-sm text-gray-500 mb-4">Preview your card, then start when you like it.</p>
 
-        <div className="grid grid-cols-5 gap-1 w-full">
-          {preview.squares.flat().map((sq) => (
-            <div
-              key={sq.id}
-              className={
-                'aspect-square p-1 border rounded flex items-center justify-center text-center text-[9px] sm:text-xs leading-tight break-words ' +
-                (sq.isFreeSpace
-                  ? 'bg-amber-100 border-amber-300 text-amber-700'
-                  : 'bg-white border-gray-200 text-gray-700')
-              }
-            >
-              {sq.isFreeSpace ? '⭐ FREE' : sq.word}
-            </div>
-          ))}
-        </div>
+        <Card className="p-2">
+          <div className="grid grid-cols-5 gap-1 w-full">
+            {preview.squares.flat().map((sq) => (
+              <div
+                key={sq.id}
+                className={
+                  'aspect-square p-1 border rounded flex items-center justify-center text-center text-[9px] sm:text-xs leading-tight break-words ' +
+                  (sq.isFreeSpace
+                    ? 'bg-amber-100 border-amber-300 text-amber-700'
+                    : 'bg-white border-gray-200 text-gray-700')
+                }
+              >
+                {sq.isFreeSpace ? '⭐ FREE' : sq.word}
+              </div>
+            ))}
+          </div>
+        </Card>
 
         <div className="flex gap-3 mt-5">
-          <button
-            type="button"
-            onClick={regenerate}
-            className="flex-1 px-4 py-2 rounded-lg border-2 border-gray-300 bg-white text-gray-700 font-medium
-                       hover:border-blue-300 active:scale-95 transition
-                       focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-          >
+          <Button onClick={regenerate} variant="secondary" className="flex-1">
             🔄 Regenerate
-          </button>
-          <button
-            type="button"
-            onClick={() => onStart(selected.id, preview)}
-            className="flex-1 px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold
-                       hover:bg-blue-700 active:scale-95 transition
-                       focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-          >
+          </Button>
+          <Button onClick={() => onStart(selected.id, preview)} className="flex-1">
             Start
-          </button>
+          </Button>
         </div>
       </div>
     );

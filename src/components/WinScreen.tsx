@@ -1,6 +1,10 @@
+import { useEffect, useState } from 'react';
 import { GameState } from '../types';
 import { countFilled } from '../lib/bingoChecker';
+import { fireConfetti } from '../lib/confetti';
+import { shareResult } from '../lib/shareUtils';
 import { cn } from '../lib/utils';
+import { Button } from './ui/Button';
 
 interface Props {
   game: GameState;
@@ -20,6 +24,18 @@ export function WinScreen({ game, onPlayAgain, onHome }: Props) {
   const winningIds = new Set(winningLine?.squares ?? []);
   const elapsed = startedAt && completedAt ? completedAt - startedAt : 0;
   const filledWords = card ? countFilled(card) - 1 : 0;
+
+  const [shareLabel, setShareLabel] = useState('Share');
+
+  useEffect(() => {
+    fireConfetti(); // silent; auto-skips under prefers-reduced-motion
+  }, []);
+
+  const handleShare = async () => {
+    const outcome = await shareResult(game);
+    setShareLabel(outcome === 'copied' ? 'Copied!' : outcome === 'shared' ? 'Shared!' : 'Try again');
+    window.setTimeout(() => setShareLabel('Share'), 2000);
+  };
 
   return (
     <div className="min-h-screen flex flex-col items-center px-4 py-8 max-w-md mx-auto text-center">
@@ -65,25 +81,17 @@ export function WinScreen({ game, onPlayAgain, onHome }: Props) {
         </div>
       </dl>
 
-      <div className="flex gap-3 mt-8 w-full">
-        <button
-          type="button"
-          onClick={onPlayAgain}
-          className="flex-1 px-4 py-3 rounded-xl bg-blue-600 text-white font-semibold
-                     hover:bg-blue-700 active:scale-95 transition
-                     focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-        >
+      <Button onClick={handleShare} variant="secondary" className="mt-6 w-full">
+        🔗 {shareLabel}
+      </Button>
+
+      <div className="flex gap-3 mt-3 w-full">
+        <Button onClick={onPlayAgain} className="flex-1 py-3">
           Play Again
-        </button>
-        <button
-          type="button"
-          onClick={onHome}
-          className="flex-1 px-4 py-3 rounded-xl border-2 border-gray-300 bg-white text-gray-700 font-semibold
-                     hover:border-blue-300 active:scale-95 transition
-                     focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-        >
+        </Button>
+        <Button onClick={onHome} variant="secondary" className="flex-1 py-3">
           Home
-        </button>
+        </Button>
       </div>
     </div>
   );

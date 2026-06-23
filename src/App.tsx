@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { Dispatch, SetStateAction, useCallback } from 'react';
 import { BingoCard, CategoryId, GameState, Screen, WinningLine } from './types';
 import { generateCard } from './lib/cardGenerator';
 import { countFilled } from './lib/bingoChecker';
+import { useLocalStorage } from './hooks/useLocalStorage';
 import { LandingPage } from './components/LandingPage';
 import { CategorySelect } from './components/CategorySelect';
 import { GameBoard } from './components/GameBoard';
 import { WinScreen } from './components/WinScreen';
+
+const STORAGE_KEY = 'meeting-bingo:state';
 
 const INITIAL_GAME: GameState = {
   status: 'idle',
@@ -18,6 +21,11 @@ const INITIAL_GAME: GameState = {
   winningWord: null,
   filledCount: 0,
 };
+
+interface Persisted {
+  screen: Screen;
+  game: GameState;
+}
 
 /** Build a fresh "playing" game from a category + card. filledCount is derived. */
 function startedGame(categoryId: CategoryId, card: BingoCard): GameState {
@@ -35,49 +43,64 @@ function startedGame(categoryId: CategoryId, card: BingoCard): GameState {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('landing');
-  const [game, setGame] = useState<GameState>(INITIAL_GAME);
+  const [persisted, setPersisted] = useLocalStorage<Persisted>(
+    STORAGE_KEY,
+    { screen: 'landing', game: INITIAL_GAME },
+    {
+      // Only resume an in-progress game; never auto-resume listening (mic can't auto-resume).
+      parse: (raw) => {
+        if (raw?.screen === 'game' && raw.game?.card && raw.game.status === 'playing') {
+          return { screen: 'game', game: { ...raw.game, isListening: false } };
+        }
+        return { screen: 'landing', game: INITIAL_GAME };
+      },
+    },
+  );
+
+  const { screen, game } = persisted;
+
+  const setScreen = useCallback(
+    (s: Screen) => setPersisted((p) => ({ ...p, screen: s })),
+    [setPersisted],
+  );
+
+  const setGame = useCallback<Dispatch<SetStateAction<GameState>>>(
+    (action) =>
+      setPersisted((p) => ({
+        ...p,
+        game: typeof action === 'function' ? (action as (g: GameState) => GameState)(p.game) : action,
+      })),
+    [setPersisted],
+  );
 
   const handleStart = () => setScreen('category');
 
-  const handleCategoryStart = (categoryId: CategoryId, card: BingoCard) => {
-    setGame(startedGame(categoryId, card));
-    setScreen('game');
-  };
+  const handleCategoryStart = (categoryId: CategoryId, card: BingoCard) =>
+    setPersisted({ screen: 'game', game: startedGame(categoryId, card) });
 
-  const handleNewCard = () => {
+  const handleNewCard = () =>
     setGame((prev) =>
       prev.category ? startedGame(prev.category, generateCard(prev.category)) : prev,
     );
-  };
 
-  const handleWin = (winningLine: WinningLine, winningWord: string) => {
-    setGame((prev) => ({
-      ...prev,
-      status: 'won',
-      completedAt: Date.now(),
-      winningLine,
-      winningWord,
+  const handleWin = (winningLine: WinningLine, winningWord: string) =>
+    setPersisted((p) => ({
+      screen: 'win',
+      game: { ...p.game, status: 'won', completedAt: Date.now(), winningLine, winningWord },
     }));
-    setScreen('win');
-  };
 
   const handlePlayAgain = () => {
     if (game.category) {
-      setGame(startedGame(game.category, generateCard(game.category)));
-      setScreen('game');
+      setPersisted({ screen: 'game', game: startedGame(game.category, generateCard(game.category)) });
     } else {
       setScreen('category');
     }
   };
 
-  const handleHome = () => {
-    setGame(INITIAL_GAME);
-    setScreen('landing');
-  };
+  const handleHome = () => setPersisted({ screen: 'landing', game: INITIAL_GAME });
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gray-50 text-gray-900 overflow-x-hidden">
       {screen === 'landing' && <LandingPage onStart={handleStart} />}
 
       {screen === 'category' && (

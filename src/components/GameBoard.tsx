@@ -6,6 +6,9 @@ import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BingoCard } from './BingoCard';
 import { GameControls } from './GameControls';
 import { TranscriptPanel } from './TranscriptPanel';
+import { ToastViewport, ToastItem } from './ui/Toast';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
 
 interface Props {
   game: GameState;
@@ -20,7 +23,7 @@ export function GameBoard({ game, setGame, onWin, onNewCard }: Props) {
 
   const [micRequested, setMicRequested] = useState(false);
   const [detected, setDetected] = useState<string[]>([]);
-  const [toasts, setToasts] = useState<{ id: number; msg: string }[]>([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastIdRef = useRef(0);
 
   // Stale-closure guard: callbacks read the latest card / onWin via refs, never a snapshot.
@@ -182,23 +185,17 @@ export function GameBoard({ game, setGame, onWin, onNewCard }: Props) {
       )}
 
       {speech.isSupported && !micRequested && (
-        <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-center">
+        <Card className="mt-4 text-center">
           <p className="text-sm text-gray-700 font-medium">Enable your microphone to auto-fill squares</p>
           <p className="mt-1 text-xs text-gray-500">
             🔒 Audio is processed on-device and never uploaded. Detection uses your local mic, so it
             works best for in-room meetings or with call audio on speakers. On headphones, tapping
             squares manually is the reliable path.
           </p>
-          <button
-            type="button"
-            onClick={handleEnableMic}
-            className="mt-3 px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold
-                       hover:bg-blue-700 active:scale-95 transition
-                       focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-          >
+          <Button onClick={handleEnableMic} className="mt-3">
             🎤 Enable microphone
-          </button>
-        </div>
+          </Button>
+        </Card>
       )}
 
       {speech.isSupported && micRequested && micBlocked && (
@@ -224,19 +221,7 @@ export function GameBoard({ game, setGame, onWin, onNewCard }: Props) {
       />
 
       {/* Visible toasts; also a polite live region for screen readers (PRO-31). */}
-      <div
-        aria-live="polite"
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50"
-      >
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className="rounded-full bg-green-600 text-white text-sm px-4 py-1.5 shadow-lg animate-bounce-in motion-reduce:animate-none"
-          >
-            {t.msg}
-          </div>
-        ))}
-      </div>
+      <ToastViewport toasts={toasts} />
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { Button } from './ui/Button';
+
 interface Props {
   onStart: () => void;
 }
@@ -11,15 +13,9 @@ export function LandingPage({ onStart }: Props) {
         mic do it for you.
       </p>
 
-      <button
-        type="button"
-        onClick={onStart}
-        className="mt-8 px-8 py-3 rounded-xl bg-blue-600 text-white font-semibold text-lg
-                   hover:bg-blue-700 active:scale-95 transition
-                   focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2"
-      >
+      <Button onClick={onStart} className="mt-8 px-8 py-3 rounded-xl text-lg">
         New Game
-      </button>
+      </Button>
 
       <section className="mt-10 text-left w-full">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">How it works</h2>
