@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GameState, WinningLine } from '../types';
 import { checkForBingo, countFilled, getClosestToWin } from '../lib/bingoChecker';
+import { detectWordsWithAliases } from '../lib/wordDetector';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BingoCard } from './BingoCard';
 import { GameControls } from './GameControls';
+import { TranscriptPanel } from './TranscriptPanel';
 
 interface Props {
   game: GameState;
@@ -13,16 +16,30 @@ interface Props {
 
 export function GameBoard({ game, setGame, onWin, onNewCard }: Props) {
   const card = game.card!;
+  const speech = useSpeechRecognition();
 
-  // Stale-closure guard: keep the latest card in a ref so any callback (and the
-  // speech handler wired in Phase 3) reads current state, never a snapshot.
+  const [micRequested, setMicRequested] = useState(false);
+  const [detected, setDetected] = useState<string[]>([]);
+  const [toasts, setToasts] = useState<{ id: number; msg: string }[]>([]);
+  const toastIdRef = useRef(0);
+
+  // Stale-closure guard: callbacks read the latest card / onWin via refs, never a snapshot.
   const cardRef = useRef(card);
   useEffect(() => {
     cardRef.current = card;
   });
+  const onWinRef = useRef(onWin);
+  useEffect(() => {
+    onWinRef.current = onWin;
+  });
 
-  // word -> {row,col} index. Cards are duplicate-free, so a lookup is unambiguous.
-  // Used by manual play and (Phase 3) speech auto-fill.
+  // Reset transient feedback when a new game/card starts.
+  useEffect(() => {
+    setDetected([]);
+    setToasts([]);
+  }, [game.startedAt]);
+
+  // word -> {row,col} index (cards are duplicate-free). Kept for fast lookups.
   const wordIndex = useMemo(() => {
     const index = new Map<string, { row: number; col: number }>();
     for (const row of card.squares) {
@@ -32,50 +49,123 @@ export function GameBoard({ game, setGame, onWin, onNewCard }: Props) {
     }
     return index;
   }, [card]);
-  // Currently exercised by tests/Phase 3; referenced here to keep it live.
   void wordIndex;
 
+  const pushToast = useCallback((msg: string) => {
+    const id = (toastIdRef.current += 1);
+    setToasts((prev) => [...prev, { id, msg }]);
+    window.setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2500);
+  }, []);
+
+  /** Mark a set of squares (manual click or speech auto-fill), then check for a win. */
+  const applyFills = useCallback(
+    (
+      shouldFill: (word: string, isFilled: boolean) => boolean,
+      opts: { auto: boolean },
+    ): void => {
+      const current = cardRef.current;
+      let lastWord = '';
+      let changed = false;
+
+      const newSquares = current.squares.map((r) =>
+        r.map((s) => {
+          if (s.isFreeSpace) return s;
+          if (shouldFill(s.word, s.isFilled)) {
+            changed = true;
+            lastWord = s.word;
+            // Manual toggles flip the square; auto-fill only ever fills.
+            const nextFilled = opts.auto ? true : !s.isFilled;
+            return {
+              ...s,
+              isFilled: nextFilled,
+              isAutoFilled: opts.auto,
+              filledAt: nextFilled ? Date.now() : null,
+            };
+          }
+          return s;
+        }),
+      );
+
+      if (!changed) return;
+      const newCard = { ...current, squares: newSquares };
+      cardRef.current = newCard; // keep ref current for rapid successive speech results
+      setGame((prev) => ({ ...prev, card: newCard, filledCount: countFilled(newCard) }));
+
+      const line = checkForBingo(newCard);
+      if (line) {
+        speech.stopListening();
+        onWinRef.current(line, lastWord);
+      }
+    },
+    [setGame, speech],
+  );
+
   const handleSquareClick = (row: number, col: number) => {
-    const current = cardRef.current;
-    const target = current.squares[row][col];
-    if (target.isFreeSpace) return; // free space can't be toggled
-
-    const willFill = !target.isFilled;
-    const newSquares = current.squares.map((r) =>
-      r.map((s) =>
-        s.id === target.id
-          ? { ...s, isFilled: willFill, isAutoFilled: false, filledAt: willFill ? Date.now() : null }
-          : s,
-      ),
-    );
-    const newCard = { ...current, squares: newSquares };
-
-    setGame((prev) => ({ ...prev, card: newCard, filledCount: countFilled(newCard) }));
-
-    // Win check runs against the freshly computed card, outside the state updater.
-    const line = checkForBingo(newCard);
-    if (line) onWin(line, target.word);
+    const target = cardRef.current.squares[row][col];
+    if (target.isFreeSpace) return;
+    applyFills((word) => word === target.word, { auto: false });
   };
 
-  const filledWords = countFilled(card) - 1; // exclude the free space
+  // Speech result handler — reads current card via cardRef (stale-closure-safe).
+  const handleResult = useCallback(
+    (finalTranscript: string) => {
+      const current = cardRef.current;
+      const alreadyFilled = new Set(
+        current.squares.flat().filter((s) => s.isFilled).map((s) => s.word.toLowerCase()),
+      );
+      const found = detectWordsWithAliases(finalTranscript, current.words, alreadyFilled);
+      if (found.length === 0) return;
+
+      const foundLower = new Set(found.map((w) => w.toLowerCase()));
+      applyFills((word, isFilled) => !isFilled && foundLower.has(word.toLowerCase()), {
+        auto: true,
+      });
+
+      setDetected((prev) => [...prev, ...found].slice(-8));
+      for (const w of found) pushToast(`✨ ${w}`);
+    },
+    [applyFills, pushToast],
+  );
+
+  const handleEnableMic = () => {
+    setMicRequested(true);
+    speech.startListening(handleResult);
+  };
+
+  const handleToggleListening = () => {
+    if (speech.isListening) speech.stopListening();
+    else speech.startListening(handleResult);
+  };
+
+  const filledWords = countFilled(card) - 1; // exclude free space
   const closest = getClosestToWin(card);
   const oneAway = closest?.needed === 1;
   const neededSquareIds = oneAway ? new Set(closest!.neededSquares) : undefined;
+  const micBlocked = speech.error === 'not-allowed' || speech.error === 'service-not-allowed';
 
   return (
     <div className="min-h-screen flex flex-col px-4 py-5 max-w-md mx-auto">
       <header className="flex items-center justify-between mb-4">
         <span className="font-bold text-gray-800">🎯 Meeting Bingo</span>
-        <span className="text-sm font-medium text-gray-600" aria-live="polite">
-          {filledWords}/24
+        <span className="flex items-center gap-2 text-sm font-medium text-gray-600">
+          {speech.isListening && (
+            <span
+              className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse motion-reduce:animate-none"
+              aria-label="Microphone active"
+            />
+          )}
+          <span aria-live="polite">{filledWords}/24</span>
         </span>
       </header>
 
-      {oneAway && (
-        <div className="mb-3 rounded-lg bg-amber-100 border border-amber-300 text-amber-800 text-center py-2 text-sm font-semibold">
-          🔥 One away from BINGO! ({closest!.line})
-        </div>
-      )}
+      {/* Polite live region: "one away" tension (PRO-31). */}
+      <div aria-live="polite">
+        {oneAway && (
+          <div className="mb-3 rounded-lg bg-amber-100 border border-amber-300 text-amber-800 text-center py-2 text-sm font-semibold">
+            🔥 One away from BINGO! ({closest!.line})
+          </div>
+        )}
+      </div>
 
       <BingoCard
         card={card}
@@ -84,7 +174,69 @@ export function GameBoard({ game, setGame, onWin, onNewCard }: Props) {
         onSquareClick={handleSquareClick}
       />
 
-      <GameControls onNewCard={onNewCard} speechSupported={false} />
+      {/* Speech section */}
+      {!speech.isSupported && (
+        <p className="mt-4 text-center text-sm text-gray-500">
+          🎤 Speech recognition isn’t available in this browser — tap squares to play.
+        </p>
+      )}
+
+      {speech.isSupported && !micRequested && (
+        <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-center">
+          <p className="text-sm text-gray-700 font-medium">Enable your microphone to auto-fill squares</p>
+          <p className="mt-1 text-xs text-gray-500">
+            🔒 Audio is processed on-device and never uploaded. Detection uses your local mic, so it
+            works best for in-room meetings or with call audio on speakers. On headphones, tapping
+            squares manually is the reliable path.
+          </p>
+          <button
+            type="button"
+            onClick={handleEnableMic}
+            className="mt-3 px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold
+                       hover:bg-blue-700 active:scale-95 transition
+                       focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          >
+            🎤 Enable microphone
+          </button>
+        </div>
+      )}
+
+      {speech.isSupported && micRequested && micBlocked && (
+        <p className="mt-4 text-center text-sm text-red-600">
+          Microphone access was blocked. You can still tap squares manually.
+        </p>
+      )}
+
+      {speech.isSupported && micRequested && !micBlocked && (
+        <TranscriptPanel
+          transcript={speech.transcript}
+          interimTranscript={speech.interimTranscript}
+          detectedWords={detected}
+          isListening={speech.isListening}
+        />
+      )}
+
+      <GameControls
+        onNewCard={onNewCard}
+        speechSupported={speech.isSupported && micRequested && !micBlocked}
+        isListening={speech.isListening}
+        onToggleListening={handleToggleListening}
+      />
+
+      {/* Visible toasts; also a polite live region for screen readers (PRO-31). */}
+      <div
+        aria-live="polite"
+        className="fixed bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50"
+      >
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className="rounded-full bg-green-600 text-white text-sm px-4 py-1.5 shadow-lg animate-bounce-in motion-reduce:animate-none"
+          >
+            {t.msg}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
